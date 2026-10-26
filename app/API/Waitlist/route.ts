@@ -17,15 +17,6 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const formId = process.env.FORMSPREE_WAITLIST_ID;
-
-  if (!formId) {
-    return NextResponse.json(
-      { error: "Signups are not available right now. Please try again soon." },
-      { status: 500 }
-    );
-  }
-
   let body: unknown;
 
   try {
@@ -47,25 +38,81 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true }, { status: 201 });
   }
 
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
+  const formId = process.env.FORMSPREE_WAITLIST_ID;
+
+  if (!url || !key || !formId) {
+    console.error("Waitlist configuration is incomplete.");
+    return NextResponse.json(
+      { error: "Signups are temporarily unavailable. Please try again soon." },
+      { status: 500 }
+    );
+  }
+
+  const email = parsed.data.email.toLowerCase();
+
+  try {
+    const response = await fetch(
+      `${url.replace(/\/$/, "")}/rest/v1/waitlist`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          email,
+          phone: parsed.data.phone || null,
+          question: parsed.data.question || null,
+        }),
+        cache: "no-store",
+      }
+    );
+
+    if (response.status === 409) {
+      return NextResponse.json(
+        { error: "You're already on the waitlist.", code: "ALREADY_REGISTERED" },
+        { status: 409 }
+      );
+    }
+
+    if (!response.ok) {
+      console.error("Supabase waitlist insert failed:", response.status);
+      return NextResponse.json(
+        { error: "We could not save your signup. Please try again." },
+        { status: 502 }
+      );
+    }
+  } catch (error) {
+    console.error("Supabase request failed:", error);
+    return NextResponse.json(
+      { error: "We could not save your signup. Please try again." },
+      { status: 502 }
+    );
+  }
+
   const payload: Record<string, string> = {
-    email: parsed.data.email,
+    email,
     _subject: "New Sillonner waitlist signup",
   };
 
   if (parsed.data.phone) payload.phone = parsed.data.phone;
   if (parsed.data.question) payload.message = parsed.data.question;
 
-  const result = await sendToFormspree(formId, payload);
+  const notification = await sendToFormspree(formId, payload);
 
-  if (!result.ok) {
-  console.error("Waitlist signup failed. Formspree status:", result.status);
-
-  return NextResponse.json(
-    {
-      error: "We could not save your signup. Please try again in a moment.",
-      code: "FORMSPREE_FAILED",
-      status: result.status,
-    },
-    { status: 502 }
-  );
+  if (!notification.ok) {
+    console.error("Waitlist saved, but Formspree notification failed:", notification.status);
+    return NextResponse.json({
+      success: true,
+      notification: "failed",
+      message: "Your signup was saved, but email notification could not be sent.",
+    }, { status: 201 });
   }
+
+  return NextResponse.json({ success: true }, { status: 201 });
+        }
+  
