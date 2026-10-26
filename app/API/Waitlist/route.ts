@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: {
         apikey: key,
-        Authorization: `Bearer ${key}`,
+        
         "Content-Type": "application/json",
         Prefer: "return=minimal",
       },
