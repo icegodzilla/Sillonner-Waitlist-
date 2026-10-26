@@ -5,64 +5,101 @@ import { sendToFormspree } from "../../../lib/formsfree";
 export const runtime = "nodejs";
 
 const schema = z.object({
-  email: z.string().trim().email("Enter a valid email address.").max(200),
-  phone: z
-    .string()
-    .trim()
-    .max(25, "That phone number looks too long.")
-    .regex(/^(\+?[0-9][0-9\s()\-]{5,23})?$/, "Enter a valid phone number, or leave it empty.")
-    .optional(),
-  question: z.string().trim().max(2000, "Your question is too long.").optional(),
-  company: z.string().optional(), // hidden field, real people leave it empty
+  email: z.string().trim().email().max(200),
+  phone: z.string().trim().max(25).optional(),
+  question: z.string().trim().max(2000).optional(),
+  company: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
   const formId = process.env.FORMSPREE_WAITLIST_ID;
-  if (!formId) {
-    console.error("FORMSPREE_WAITLIST_ID is not set.");
+
+  if (!url || !key || !formId) {
     return NextResponse.json(
-      { error: "Signups are not available right now. Please try again soon." },
+      { error: "Signups are temporarily unavailable." },
       { status: 500 }
     );
   }
 
   let body: unknown;
+
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
-  }
-
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
     return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Invalid input." },
+      { error: "Invalid request." },
       { status: 400 }
     );
   }
 
-  // Bots fill the hidden field. Pretend it worked and drop it.
+  const parsed = schema.safeParse(body);
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Please enter a valid email address." },
+      { status: 400 }
+    );
+  }
+
   if (parsed.data.company) {
     return NextResponse.json({ success: true }, { status: 201 });
   }
 
-  const payload: Record<string, string> = {
-    email: parsed.data.email,
-    _subject: "New Sillonner waitlist signup",
-  };
-  if (parsed.data.phone) {
-    payload.phone = parsed.data.phone;
-  }
-  if (parsed.data.question) {
-    payload.message = parsed.data.question;
-  }
+  const email = parsed.data.email.toLowerCase();
+  const payload: Record<string, string> = { email };
 
-  const result = await sendToFormspree(formId, payload);
-  if (!result.ok) {
+  if (parsed.data.phone) payload.phone = parsed.data.phone;
+  if (parsed.data.question) payload.question = parsed.data.question;
+
+  let response: Response;
+
+  try {
+    response = await fetch(`${url.replace(/\/$/, "")}/rest/v1/waitlist`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+  } catch {
     return NextResponse.json(
-      { error: "We could not save your signup. Please try again in a moment." },
+      { error: "Could not reach the server. Please try again." },
       { status: 502 }
     );
+  }
+
+  if (!response.ok) {
+    const details = await response.text();
+    console.error("Supabase signup failed:", response.status, details);
+
+    if (response.status === 409 || details.includes("23505")) {
+      return NextResponse.json(
+        { error: "This email has already joined the waitlist." },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: "We could not save your signup. Please try again." },
+      { status: 502 }
+    );
+  }
+
+  const notification = await sendToFormspree(formId, {
+    email,
+    _subject: "New Sillonner waitlist signup",
+    ...(parsed.data.phone ? { phone: parsed.data.phone } : {}),
+    ...(parsed.data.question ? { message: parsed.data.question } : {}),
+  });
+
+  if (!notification.ok) {
+    console.error("Signup saved, but Formspree notification failed.");
   }
 
   return NextResponse.json({ success: true }, { status: 201 });
