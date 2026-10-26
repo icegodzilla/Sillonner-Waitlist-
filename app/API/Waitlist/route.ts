@@ -53,8 +53,10 @@ export async function POST(req: NextRequest) {
   const email = parsed.data.email.toLowerCase();
 
   try {
-    const response = await fetch(
-      `${url.replace(/\/$/, "")}/rest/v1/waitlist`,
+    const supabaseUrl = url.replace(/\/+$/, "").replace(/\/rest\/v1$/, "");
+
+const response = await fetch(
+  `${supabaseUrl}/rest/v1/waitlist`,
       {
         method: "POST",
         headers: {
