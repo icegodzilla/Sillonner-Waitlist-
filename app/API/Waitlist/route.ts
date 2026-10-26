@@ -58,11 +58,14 @@ export async function POST(req: NextRequest) {
   const result = await sendToFormspree(formId, payload);
 
   if (!result.ok) {
-    return NextResponse.json(
-      { error: "We could not save your signup. Please try again in a moment." },
-      { status: 502 }
-    );
-  }
+  console.error("Waitlist signup failed. Formspree status:", result.status);
 
-  return NextResponse.json({ success: true }, { status: 201 });
-}
+  return NextResponse.json(
+    {
+      error: "We could not save your signup. Please try again in a moment.",
+      code: "FORMSPREE_FAILED",
+      status: result.status,
+    },
+    { status: 502 }
+  );
+  }
