@@ -80,7 +80,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (!response.ok) {
-      console.error("Supabase waitlist insert failed:", response.status);
+      console.error(
+  "Supabase waitlist insert failed:",
+  response.status,
+  await response.text()
+);
       return NextResponse.json(
         { error: "We could not save your signup. Please try again." },
         { status: 502 }
